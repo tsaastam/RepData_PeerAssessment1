@@ -8,18 +8,77 @@ output:
 
 ## Loading and preprocessing the data
 
+First let's unzip and load the data. To make the dates and times more
+manageable, we add two new columns that have `Date` objects in them, based on
+the `date` and `interval` values from the CSV.
+
+```{r}
+unzip("activity.zip")
+data <- read.csv("activity.csv")
+data$dateob <- as.POSIXct(strptime(data$date, format="%Y-%m-%d"))
+data$datetime <- data$dateob + 60*data$interval
+```
+
+I'll be using the `sqldf` package for summarising the data, so let's bring that in as well. I'll also use `lattice` for plotting.
+
+```{r}
+options(gsubfn.engine = "R")
+library(sqldf)
+library(lattice)
+```
 
 
 ## What is mean total number of steps taken per day?
 
+```{r}
+dailysteps <- sqldf("SELECT date, SUM(steps) AS steps FROM data GROUP BY date")
+dailysteps
+hist(dailysteps$steps, breaks=20)
+mean(dailysteps$steps, na.rm=TRUE)
+median(dailysteps$steps, na.rm=TRUE)
+```
 
 
 ## What is the average daily activity pattern?
 
+```{r}
+sqldf("SELECT COUNT(DISTINCT date) FROM data")
+intervalsteps <- sqldf("SELECT interval, SUM(steps)/61 AS avg_steps FROM data GROUP BY interval")
+plot(intervalsteps$interval, intervalsteps$avg_steps, type="l")
+intervalsteps[which.max(intervalsteps$avg_steps),]
+```
 
 
 ## Imputing missing values
 
+```{r}
+length(which(is.na(data$steps)))
+incomplete <- data[!complete.cases(data),]
+sqldf("SELECT date, COUNT(interval) FROM incomplete GROUP BY date")
+```
+
+So we see that whole days are missing. I chose to simply replace each missing day's intervals with the average intervals, which were calculated above. (The averages are across non-missing data only.)
+
+```{r}
+data2 <- merge(data, intervalsteps, by="interval")
+data2$steps = ifelse(is.na(data2$steps), data2$avg_steps, data2$steps)
+dailysteps2 <- sqldf("SELECT date, SUM(steps) AS steps FROM data2 GROUP BY date")
+dailysteps2
+hist(dailysteps2$steps, breaks=20)
+mean(dailysteps2$steps, na.rm=TRUE)
+median(dailysteps2$steps, na.rm=TRUE)
+```
+
+So we see that each missing day was replaced with the average, as desired. The operation caused the mean and median to both be slightly lower for the imputed data. This is because the average-interval day, which we used for the imputation, has somewhat fewer total steps than the average day.
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+I used the original, NA-containing data for this rather than the imputed data. `xyplot` is from the `lattice` package.
+
+```{r}
+data$weekend <- weekdays(as.Date(data$date, format="%Y-%m-%d")) %in% c("Saturday", "Sunday")
+data$weekend <- ifelse(data$weekend, "Weekend", "Weekday")
+intervalsteps <- sqldf("SELECT interval, SUM(steps)/61 AS avg_steps, weekend FROM data GROUP BY interval, weekend")
+xyplot(avg_steps ~ interval | weekend, data=intervalsteps, type="l", layout=c(1,2))
+```
